@@ -5,7 +5,7 @@ use warnings;
 
 use base qw(Class::Accessor::Fast);
 
-our $VERSION = "1.00";
+our $VERSION = "1.01";
 
 __PACKAGE__->mk_accessors(
   qw(id client buried reserved data error)
@@ -20,15 +20,31 @@ sub stats {
 
 sub delete {
   my $self = shift;
+
   my $ret = $self->client->delete($self->id)
     or $self->error($self->client->error);
+
+  $self->reserved(0);
+  $self->buried(0);
+
+  $ret;
+}
+
+sub touch {
+  my $self = shift;
+
+  my $ret = $self->client->touch($self->id)
+    or $self->error($self->client->error);
+
   $ret;
 }
 
 sub peek {
   my $self = shift;
+
   my $ret = $self->client->peek($self->id)
     or $self->error($self->client->error);
+
   $ret;
 }
 
@@ -36,9 +52,11 @@ sub release {
   my $self = shift;
   my $opt  = shift;
 
-  $self->reserved(0);
   my $ret = $self->client->release($self->id, $opt)
     or $self->error($self->client->error);
+
+  $self->reserved(0);
+
   $ret;
 }
 
@@ -50,7 +68,10 @@ sub bury {
     $self->error($self->client->error);
     return undef;
   }
+
+  $self->reserved(0);
   $self->buried(1);
+
   return 1;
 }
 
@@ -119,7 +140,7 @@ Returns true if the job is buried
 
 =item B<reserved>
 
-Returns true if the job is reserved
+Returns true if the job was created via a reserve command and has not been deleted, buried or released
 
 =item B<data>
 
@@ -137,6 +158,11 @@ methods available.
 =item B<delete>
 
 Tell the server to delete this job
+
+=item B<touch>
+
+Calling C<touch> on a reserved job will reset the time left for the job to complete
+back to the original ttr value.
 
 =item B<peek>
 

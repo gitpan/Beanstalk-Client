@@ -13,7 +13,7 @@ use Error;
 use Beanstalk::Job;
 use Beanstalk::Stats;
 
-our $VERSION = "1.00";
+our $VERSION = "1.01";
 
 # use namespace::clean;
 
@@ -104,6 +104,7 @@ READ: while ($more > 0) {
     if ($read) {
       $offset += $read;
       $more -= $read;
+      last if $more == 0;
       redo READ;
     }
     else {
@@ -149,8 +150,8 @@ sub _peek {
     or return undef;
 
   if ($resp[0] eq 'FOUND') {
-    my $data = _recv_data($self, $resp[2])
-      or return undef;
+    my $data = _recv_data($self, $resp[2]);
+    return undef unless defined $data;
     return Beanstalk::Job->new(
       { id     => $resp[1],
         client => $self,
@@ -227,10 +228,10 @@ sub put {
   my $self = shift;
   my $opt  = shift || {};
 
-  my $pri   = exists $opt->{pri}   ? $opt->{pri}   : $self->priority;
-  my $ttr   = exists $opt->{ttr}   ? $opt->{ttr}   : $self->ttr;
-  my $delay = exists $opt->{delay} ? $opt->{delay} : $self->delay;
-  my $data  = exists $opt->{data}  ? $opt->{data}  : $self->encoder->(@_);
+  my $pri   = exists $opt->{priority} ? $opt->{priority} : $self->priority;
+  my $ttr   = exists $opt->{ttr}      ? $opt->{ttr}      : $self->ttr;
+  my $delay = exists $opt->{delay}    ? $opt->{delay}    : $self->delay;
+  my $data  = exists $opt->{data}     ? $opt->{data}     : $self->encoder->(@_);
 
   utf8::encode($data) if utf8::is_utf8($data);    # need bytes
 
@@ -307,13 +308,13 @@ sub reserve {
   my $self    = shift;
   my $timeout = shift;
 
-  my $cmd     = defined($timeout) ? "reserve" : "reserve-with-timeout $timeout";
+  my $cmd     = defined($timeout) ? "reserve-with-timeout $timeout" : "reserve";
   my @resp    = _interact($self, $cmd)
     or return undef;
 
   if ($resp[0] eq 'RESERVED') {
-    my $data = _recv_data($self, $resp[2])
-      or return undef;
+    my $data = _recv_data($self, $resp[2]);
+    return undef unless defined $data;
 
     return Beanstalk::Job->new(
       { id     => $resp[1],
@@ -339,14 +340,25 @@ sub delete {
   return undef;
 }
 
+sub touch {
+  my $self = shift;
+  my $id   = shift;
+  my @resp = _interact($self, "touch $id")
+    or return undef;
+  return 1 if $resp[0] eq 'TOUCHED';
+
+  $self->error(join ' ', @resp);
+  return undef;
+}
+
 
 sub release {
   my $self = shift;
   my $id   = shift;
   my $opt  = shift || {};
 
-  my $pri   = exists $opt->{pri}   ? $opt->{pri}   : $self->priority;
-  my $delay = exists $opt->{delay} ? $opt->{delay} : $self->delay;
+  my $pri   = exists $opt->{priority} ? $opt->{priority} : $self->priority;
+  my $delay = exists $opt->{delay}    ? $opt->{delay}    : $self->delay;
 
   my @resp = _interact($self, "release $id $pri $delay")
     or return undef;
@@ -362,7 +374,7 @@ sub bury {
   my $id   = shift;
   my $opt  = shift || {};
 
-  my $pri = exists $opt->{pri} ? $opt->{pri} : $self->priority;
+  my $pri = exists $opt->{priority} ? $opt->{priority} : $self->priority;
 
   my @resp = _interact($self, "bury $id $pri")
     or return undef;
@@ -625,6 +637,11 @@ These methods are used by clients that are placing work into the queue
 =item B<release ($id, [, $options])>
 
 =item B<bury ($id [, $options])>
+
+=item B<touch ($id)>
+
+Calling C<touch> with the id of a reserved job will reset the time left for the job to complete
+back to the original ttr value.
 
 =item B<watch ($tube)>
 
