@@ -13,7 +13,7 @@ use Error;
 use Beanstalk::Job;
 use Beanstalk::Stats;
 
-our $VERSION = "1.03";
+our $VERSION = "1.04";
 
 # use namespace::clean;
 
@@ -163,6 +163,14 @@ sub _peek {
 
   $self->error(join ' ', @resp);
   return undef;
+}
+
+sub __watching {
+  my $self = shift;
+  my $watching = $self->_watching;
+  return $watching if $watching;
+  $self->list_tubes_watched;
+  $self->_watching;
 }
 
 # use namespace::clean;
@@ -401,7 +409,7 @@ sub watch {
   my $self = shift;
   my $tube = shift;
 
-  my $watching = $self->_watching;
+  my $watching = $self->__watching or return undef;
   return scalar keys %$watching if $watching->{$tube};
 
   my @resp = _interact($self, "watch $tube")
@@ -421,7 +429,7 @@ sub ignore {
   my $self = shift;
   my $tube = shift;
 
-  my $watching = $self->_watching;
+  my $watching = $self->__watching or return undef;
   return scalar keys %$watching unless $watching->{$tube};
 
   my @resp = _interact($self, "ignore $tube")
@@ -439,7 +447,8 @@ sub ignore {
 
 sub watch_only {
   my $self = shift;
-  my %watched = %{ $self->_watching };
+  my $watching = $self->__watching or return undef;
+  my %watched = %$watching;
   my $ret;
   foreach my $watch (@_) {
     next if delete $watched{$watch};
@@ -448,7 +457,7 @@ sub watch_only {
   foreach my $ignore (keys %watched) {
     $ret = $self->ignore($ignore) or return undef;
   }
-  return $ret || scalar keys %{ $self->_watching };
+  return $ret || scalar keys %$watching;
 }
 
 
@@ -480,7 +489,7 @@ sub list_tube_used {
 sub list_tubes_watched {
   my $self = shift;
   my $ret = _interact_yaml_resp($self, "list-tubes-watched")
-    or return undef;
+    or return;
   $self->_watching( { map { ($_,1) } @$ret });
   @$ret;
 }
@@ -1043,8 +1052,9 @@ Returns the current tube being used. This is the tube which C<put> will place jo
 
 =item B<list_tubes_watched>
 
-Returns a list of tubes being watched. These are the tubes that C<reserve>
-will check to find jobs.
+Returns a list of tubes being watched, or the number of tubes being watched in a scalar context.
+These are the tubes that C<reserve> will check to find jobs. On error an empty list, or undef in
+a scalar context, will be returned.
 
 =back
 

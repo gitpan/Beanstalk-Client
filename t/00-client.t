@@ -1,17 +1,31 @@
 
-use Test::More tests => 22;
+use Test::More tests => 24;
 
 use_ok('Beanstalk::Stats');
 use_ok('Beanstalk::Job');
 use_ok('Beanstalk::Client');
 
-my $client = Beanstalk::Client->new;
+{ package NoConnect;
+  @ISA = qw(Beanstalk::Client);
+  sub connect { return; }
+}
+
+my $client = NoConnect->new;
 
 ok($client,"Create client");
 
+is_deeply(
+  [$client->list_tubes_watched],
+  [],
+  "list_tubes_watched return empty list on error"
+);
+
+# Connect to server running on localhost
+$client = Beanstalk::Client->new;
+
 unless ($client->connect) {
 SKIP: {
-    skip("Need local beanstalkd server running", 18);
+    skip("Need local beanstalkd server running", 19);
   }
   exit(0);
 }
@@ -68,6 +82,13 @@ is($client->list_tube_used, 'foobar', 'list_tube_used');
 $client->disconnect;
 is_deeply( [$client->list_tubes_watched], ['barfoo'], 'watch_only after disconnect');
 is($client->list_tube_used, 'foobar', 'list_tube_used after disconnect');
+
+$client = Beanstalk::Client->new;
+is(
+  $client->watch_only('foo'),
+  1,
+  "can call watch_only before connect"
+);
 
 sub test_encoding {
   my $client = shift;
