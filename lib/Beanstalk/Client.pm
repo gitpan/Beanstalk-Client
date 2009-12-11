@@ -8,12 +8,11 @@ use base qw(Class::Accessor::Fast);
 use YAML::Syck;
 use Socket;
 use IO::Socket::INET;
-use Error;
 
 use Beanstalk::Job;
 use Beanstalk::Stats;
 
-our $VERSION = "1.05";
+our $VERSION = "1.06";
 
 # use namespace::clean;
 
@@ -226,7 +225,7 @@ sub connect {
   }
 
   if (defined $was_using) {
-    $self->use($was_using) 
+    $self->use($was_using)
       or return $self->disconnect;
   }
 
@@ -240,6 +239,11 @@ sub disconnect {
     close($sock);
   }
   $self->socket(undef);
+}
+
+sub quit {
+  shift->disconnect;
+  return 1;
 }
 
 
@@ -494,6 +498,19 @@ sub list_tubes_watched {
   @$ret;
 }
 
+
+sub pause_tube {
+  my $self = shift;
+  my $tube = shift;
+  my $delay= shift || 0;
+  my @resp = _interact($self, "pause-tube $tube $delay")
+    or return undef;
+  return 1 if $resp[0] eq 'PAUSED';
+
+  $self->error(join ' ', @resp);
+  return undef;
+}
+
 1;
 
 __END__
@@ -609,7 +626,7 @@ return a string representation to pass to the server. (Default: YAML::Syck::Dump
 Set/get the serialization decoder. C<$decoder> is a reference to a
 subroutine that will be called when data from the beanstalkd server needs to be
 decoded. The subroutine will be passed the data fetched from the beanstalkd
-server and should return a list of values the application can use. 
+server and should return a list of values the application can use.
 (Default: YAML::Syck::Load)
 
 =item B<error>
@@ -645,7 +662,43 @@ These methods are used by clients that are placing work into the queue
 
 =item B<put ($options [, @args])>
 
+Insert job into the currently used tube. Options may be
+
+=over
+
+=item priority
+
+priority to use to queue the job.
+Jobs with smaller priority values will be
+scheduled before jobs with larger priorities. The most urgent priority is 0
+
+Defaults to C<$self->priority>
+
+=item delay
+
+An integer number of seconds to wait before putting the job in
+   the ready queue. The job will be in the "delayed" state during this time
+
+Defaults to C<$self->delay>
+
+=item ttr
+
+"time to run" - An integer number of seconds to allow a worker
+to run this job. This time is counted from the moment a worker reserves
+this job. If the worker does not delete, release, or bury the job within
+C<ttr> seconds, the job will time out and the server will release the job.
+The minimum ttr is 1. If the client sends 0, the server will silently
+increase the ttr to 1.
+
+=item data
+
+The job body. Defaults to the result of calling the current encoder passing C<@args>
+
+=back
+
 =item B<use ($tube)>
+
+Change tube that new jobs are inserted into
 
 =back
 
@@ -655,11 +708,50 @@ These methods are used by clients that are placing work into the queue
 
 =item B<reserve ([$timeout])>
 
+Reserve a job from the list of tubes currently being watched.
+
+Returns a L<Beanstalk::Job> on success. C<$timeout> is the maximum number
+of seconds to wait for a job to become ready. If C<$timeout> is not given then the client
+will wait indefinitely.
+
+Returns undef on error or if C<$timeout> expires.
+
 =item B<delete ($id)>
+
+Delete the specified job.
 
 =item B<release ($id, [, $options])>
 
+Release the specified job. Valid options are
+
+=over
+
+=item priority
+
+New priority to assign to the job
+
+=item delay
+
+An integer number of seconds to wait before putting the job in
+the ready queue. The job will be in the "delayed" state during this time
+
+=back
+
 =item B<bury ($id [, $options])>
+
+The bury command puts a job into the "buried" state. Buried jobs are put into a
+FIFO linked list and will not be touched by the server again until a client
+kicks them with the "kick" command.
+
+Valid options are
+
+=over
+
+=item priority
+
+New priority to assign to the job
+
+=back
 
 =item B<touch ($id)>
 
@@ -668,9 +760,16 @@ back to the original ttr value.
 
 =item B<watch ($tube)>
 
+Specifies a tube to add to the watch
+list. If the tube doesn't exist, it will be created
+
 =item B<ignore ($tube)>
 
+Stop watching C<$tube>
+
 =item B<watch_only (@tubes)>
+
+Watch only the list of given tube names
 
 =back
 
@@ -684,6 +783,10 @@ Connect to server. If sucessful, set the tube to use and tube to watch if
 a C<default_tube> was specified.
 
 =item B<disconnect>
+
+Disconnect from server. C<socket> method will return undef.
+
+=item B<quit>
 
 Disconnect from server. C<socket> method will return undef.
 
@@ -757,6 +860,11 @@ The number of seconds left until the server puts this job
 into the ready queue. This number is only meaningful if the job is
 reserved or delayed. If the job is reserved and this amount of time
 elapses before its state changes, it is considered to have timed out.
+
+=item *
+
+B<reserves> -
+The number of times this job has been reserved
 
 =item *
 
@@ -835,6 +943,20 @@ B<current_waiting> -
 The number of open connections that have issued a
 reserve command while watching this tube but not yet received a response.
 
+=item *
+
+B<pause> -
+The number of seconds the tube has been paused for.
+
+=item *
+
+B<cmd_pause_tube> -
+The cumulative number of pause-tube commands for this tube.
+
+=item *
+
+B<pause_time_left> -
+The number of seconds until the tube is un-paused.
 
 =back
 
@@ -967,6 +1089,11 @@ commands.
 
 =item *
 
+B<cmd_pause_tube> -
+The cumulative number of pause-tube commands
+
+=item *
+
 B<job_timeouts> -
 The cumulative count of times a job has timed out.
 
@@ -1040,6 +1167,24 @@ seconds and microseconds.
 B<uptime> -
 The number of seconds since this server started running.
 
+=item *
+
+B<binlog_oldest_index> -
+The index of the oldest binlog file needed to
+store the current jobs
+
+=item *
+
+B<binlog_current_index> -
+The index of the current binlog file being
+written to. If binlog is not active this value will be 0
+
+=item *
+
+B<binlog_max_size> -
+The maximum size in bytes a binlog file is allowed
+to get before a new binlog file is opened
+
 =back
 
 =item B<list_tubes>
@@ -1055,6 +1200,12 @@ Returns the current tube being used. This is the tube which C<put> will place jo
 Returns a list of tubes being watched, or the number of tubes being watched in a scalar context.
 These are the tubes that C<reserve> will check to find jobs. On error an empty list, or undef in
 a scalar context, will be returned.
+
+=item B<pause_tube ($tube, $delay)>
+
+Pause from reserving any jobs in C<$tube> for C<$delay> seconds.
+
+Returns true on success and C<undef> on error.
 
 =back
 

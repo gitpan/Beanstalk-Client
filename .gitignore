@@ -1,8 +1,0 @@
-Makefile
-*blib
-_test
-temp
-*.bak
-*.old
-.DS_Store
-cover_db
