@@ -12,7 +12,7 @@ use IO::Socket::INET;
 use Beanstalk::Job;
 use Beanstalk::Stats;
 
-our $VERSION = "1.06";
+our $VERSION = "1.07";
 
 # use namespace::clean;
 
@@ -307,6 +307,20 @@ sub kick {
     or return undef;
 
   return $resp[1] if $resp[0] eq 'KICKED';
+
+  $self->error(join ' ', @resp);
+  return undef;
+}
+
+
+sub kick_job {
+  my $self  = shift;
+  my $job   = shift;
+
+  my @resp = _interact($self, "kick-job $job")
+    or return undef;
+
+  return 1 if $resp[0] eq 'KICKED';
 
   $self->error(join ' ', @resp);
   return undef;
@@ -820,6 +834,16 @@ the ready queue. If there are any buried jobs, it will only kick buried jobs.
 Otherwise it will kick delayed jobs. The server will not kick more than C<$bound>
 jobs. Returns the number of jobs kicked, or undef if there was an error.
 
+=item B<kick_job ($id)>
+
+The kick-job command is a variant of kick that operats with a single job
+identified by its job id. If the given job id exists and is in a buried or
+delayed state, it will be moved to the ready queue of the same tube where it
+currently belongs. Returns C<undef> on error.
+
+Note: the kick_job command was only introduced on version 1.8 of beanstalk. If you
+have a version of beanstalk prior to this then the command will return an error.
+
 =item B<stats_job ($id)>
 
 Return stats for the specified job C<$id>. Returns C<undef> on error.
@@ -1220,7 +1244,7 @@ beanstalkd
 
 =head1 SEE ALSO
 
-http://xph.us/software/beanstalkd/
+http://kr.github.com/beanstalkd/
 
 L<Beanstalk::Pool>, L<Beanstalk::Job>, L<Beanstalk::Stats>
 
@@ -1236,11 +1260,19 @@ Graham Barr <gbarr@pobox.com>
 
 =item * Rhesa Rozendaal
 
+=item * Ian Docherty
+
 =back
+
+=head1 BUGS
+
+The Git repository is available at http://github.com/gbarr/perl-beanstalk-client
+
+Please report any bugs or feature requests to the issue tracker at http://github.com/gbarr/perl-beanstalk-client/issues
 
 =head1 COPYRIGHT
 
-Copyright (C) 2008 by Graham Barr.
+Copyright (C) 2008-2012 by Graham Barr.
 
 This program is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself.
